@@ -6,7 +6,8 @@ lands in `.agents/skills/`, where Claude Code, Cursor, Windsurf, Cline, and othe
 
 ```
 registry.json      sources (repo + commit), skills, collections
-scripts/gg.ps1     the only tool
+gg.cmd             shortcut: "gg core", "gg list", "gg sync"
+scripts/gg.ps1     the actual tool
 skills/            your own skills (committed)
 ```
 
@@ -34,10 +35,18 @@ Skills are vendored from three upstream repos, each pinned to a commit:
 | `core` | 5 | ponytail + brainstorming, writing-plans, TDD, verification |
 | `all` | 43 | Everything above |
 
+Add the repo root to your `PATH` once, then the command is just `gg`:
+
 ```powershell
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 list
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 list -Collection core
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Projects\GG_Skills", "User")
 ```
+
+```powershell
+gg list
+gg list -Collection core
+```
+
+Without the PATH entry, run `C:\Projects\GG_Skills\gg.cmd` instead of `gg`.
 
 ## Install into a project
 
@@ -45,16 +54,19 @@ Ad-hoc install (merges with whatever is already installed):
 
 ```powershell
 cd C:\Projects\MyApp
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 install -Collections core
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 install -Collections ponytail -Skills caveman-commit
+gg core
+gg install -Collections ponytail -Skills caveman-commit
 ```
+
+Typing a collection name alone (`gg core`, `gg all`) is shorthand for
+`gg install -Collections core`.
 
 Or make it declarative: write `skills.json` once, commit it, then `sync`:
 
 ```powershell
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 init -Collections ponytail,core
+gg init -Collections ponytail,core
 git add skills.json
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 sync
+gg sync
 ```
 
 `sync` installs what the manifest lists and removes skills that `gg` installed
@@ -81,7 +93,7 @@ All commands take `-Target <path>` (defaults to the current directory).
 ```powershell
 cd C:\Projects\MyApp
 # ... author .agents/skills/my-api/SKILL.md, test it with your assistant ...
-powershell C:\Projects\GG_Skills\scripts\gg.ps1 save -SkillName my-api
+powershell C:\Projects\GG_Skills\gg.cmd save -SkillName my-api
 ```
 
 Then add the name to a collection in `registry.json` so it can be installed elsewhere:
@@ -116,7 +128,7 @@ reproducible (`-AllowBranch` overrides for a one-off test).
 
 | Symptom | Cause / fix |
 |---|---|
-| `Unknown collection` | Typo, or the registry entry is missing. `gg.ps1 list` |
+| `Unknown collection` | Typo, or the registry entry is missing. `gg list` |
 | `Unknown skill` | Not in `registry.json` and not in `skills/` |
 | `pinned to 'main', not a commit SHA` | Use a SHA, or pass `-AllowBranch` |
 | `lock is empty` | Nothing installed in that target yet |

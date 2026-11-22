@@ -577,16 +577,21 @@ function Show-Help {
     Write-Host @"
 GG_Skills
 
-Usage:
-  gg.ps1 list    [-Collection name]
-  gg.ps1 install -Collections a,b [-Skills x,y] [-Target path] [-Force]
-  gg.ps1 init    -Collections a,b [-Skills x,y] [-Target path] [-Force]
-  gg.ps1 sync    [-Target path] [-Force]
-  gg.ps1 save    -SkillName name [-Target path] [-Force]
-  gg.ps1 verify  [-Target path]
-  gg.ps1 doctor  [-Target path]
+Simplest use:
+  gg core        install the 'core' collection into the current project
+  gg list        show collections
+  gg sync        sync a project to its skills.json
 
-Run 'gg.ps1 list' to see collections.
+Commands:
+  gg list    [-Collection name]
+  gg install -Collections a,b [-Skills x,y] [-Target path] [-Force]
+  gg init    -Collections a,b [-Skills x,y] [-Target path] [-Force]
+  gg sync    [-Target path] [-Force]
+  gg save    -SkillName name [-Target path] [-Force]
+  gg verify  [-Target path]
+  gg doctor  [-Target path]
+
+Or type a collection name instead of 'install'.
 "@
 }
 
@@ -606,7 +611,17 @@ try {
         }
     }
 
-    switch ($Command.ToLower()) {
+    # Shortcut: "gg core" means "gg install -Collections core"
+    $verb = $Command.ToLower()
+    $verbs = @("list", "install", "init", "sync", "save", "verify", "doctor", "help")
+    if ($verbs -notcontains $verb) {
+        if ($reg.collections.PSObject.Properties[$Command]) {
+            $Collections = @($Command)
+            $verb = "install"
+        }
+    }
+
+    switch ($verb) {
         "list" {
             Show-List -Reg $reg -CollectionName $Collection
             exit 0
