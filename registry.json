@@ -12,6 +12,10 @@
     "superpowers": {
       "repo": "obra/superpowers",
       "commit": "22f0b463e7a5e579904dd6211a520321035526f7"
+    },
+    "taste-skill": {
+      "repo": "Leonxlnx/taste-skill",
+      "commit": "f6b76575f949707b4e3c37cd86cb44b0b98643e8"
     }
   },
   "skills": {
@@ -59,7 +63,8 @@
     "using-git-worktrees":               { "source": "superpowers" },
     "finishing-a-development-branch":    { "source": "superpowers" },
     "diagnosing-superpowers":            { "source": "superpowers" },
-    "writing-skills":                    { "source": "superpowers" }
+    "writing-skills":                    { "source": "superpowers" },
+    "design-taste-frontend": { "source": "taste-skill", "path": "skills/taste-skill" }
   },
   "collections": {
     "ponytail": [
@@ -118,8 +123,11 @@
       "test-driven-development",
       "verification-before-completion"
     ],
+    "taste-skill": [
+      "design-taste-frontend"
+    ],
     "all": {
-      "includes": ["ponytail", "caveman", "superpowers"]
+      "includes": ["ponytail", "caveman", "superpowers", "taste-skill"]
     }
   }
 }

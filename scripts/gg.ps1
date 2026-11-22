@@ -35,9 +35,13 @@ param(
     [string[]]$Skills = @(),
     [string]$Collection = "",
     [string]$SkillName = "",
+    [string]$Repo = "",
+    [string]$Ref = "",
+    [string]$Source = "",
     [string]$Target = ".",
     [switch]$Force,
-    [switch]$AllowBranch
+    [switch]$AllowBranch,
+    [switch]$Write
 )
 
 $ErrorActionPreference = "Stop"
@@ -513,7 +517,7 @@ function Invoke-Save {
     Copy-Item $source $dest -Recurse -Force
 
     Write-Ok "saved skills\$Name"
-    Write-Warn "add '$Name' to a collection in registry.json to make it installable"
+    Write-Warn "add '$Name' to a collection in registry.json to install it with -Collections or sync"
 }
 
 # ------------------------------------------------------------------ doctor
@@ -552,6 +556,186 @@ function Invoke-Doctor {
     return 0
 }
 
+# --------------------------------------------------------------- add-source
+
+function Get-SkillFrontmatterName {
+    param([string]$Path)
+
+    $lines = @(Get-Content $Path -TotalCount 30 -Encoding UTF8)
+    if ($lines.Count -lt 2 -or $lines[0].Trim() -ne "---") { return $null }
+
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -eq "---") { break }
+        if ($lines[$i] -match '^name:\s*(.+?)\s*$') {
+            $value = $matches[1].Trim().Trim('"', "'")
+            if ($value) { return $value }
+        }
+    }
+    return $null
+}
+
+function Add-JsonBlock {
+    param([string]$Text, [string]$Key, [string]$Block)
+
+    $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Text -split "`r?`n")) { $lines.Add($line) }
+
+    $openIndex = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match ('^\s*"' + [regex]::Escape($Key) + '"\s*:\s*\{\s*$')) { $openIndex = $i; break }
+    }
+    if ($openIndex -lt 0) { throw "registry.json: cannot find the `"$Key`" object" }
+
+    $depth = 0
+    $closeIndex = -1
+    for ($i = $openIndex; $i -lt $lines.Count; $i++) {
+        $depth += ([regex]::Matches($lines[$i], '\{')).Count
+        $depth -= ([regex]::Matches($lines[$i], '\}')).Count
+        if ($i -gt $openIndex -and $depth -le 0) { $closeIndex = $i; break }
+    }
+    if ($closeIndex -lt 0) { throw "registry.json: cannot find the end of the `"$Key`" object" }
+
+    $previous = $closeIndex - 1
+    while ($previous -gt $openIndex -and $lines[$previous].Trim() -eq "") { $previous-- }
+    if ($previous -gt $openIndex -and -not $lines[$previous].TrimEnd().EndsWith(",")) {
+        $lines[$previous] = $lines[$previous].TrimEnd() + ","
+    }
+
+    $lines.InsertRange($closeIndex, [string[]]@($Block -split "`r?`n"))
+    return ($lines -join $newline)
+}
+
+function Invoke-AddSource {
+    param($Reg, [string]$Repo, [string]$Ref, [string]$SourceName, [switch]$Write)
+
+    if (-not $Repo) { throw "Use -Repo owner/name" }
+
+    $Repo = $Repo.Trim()
+    $Repo = $Repo -replace '^https?://github\.com/', ''
+    $Repo = $Repo -replace '\.git$', ''
+    $Repo = $Repo.Trim('/')
+
+    $parts = @($Repo -split '/')
+    if ($parts.Count -ne 2 -or -not $parts[0] -or -not $parts[1]) {
+        throw "Use -Repo owner/name (got '$Repo')"
+    }
+
+    $scanDir = Join-Path $CacheDir ("add-source_" + (($parts -join "_") -replace '[^a-zA-Z0-9._-]', "_"))
+    if (Test-Path $scanDir) { Remove-Item $scanDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null
+
+    Write-Step "Cloning $Repo"
+    $clone = Invoke-Git @("clone", "--quiet", "https://github.com/$Repo.git", $scanDir)
+    if ($clone.Code -ne 0) { throw "git clone failed for ${Repo}: $($clone.Output -join ' ')" }
+
+    if ($Ref) {
+        Write-Step "Checking out $Ref"
+        $checkout = Invoke-Git @("-C", $scanDir, "checkout", "--quiet", "--force", $Ref)
+        if ($checkout.Code -ne 0) { throw "Cannot check out '$Ref' in ${Repo}: $($checkout.Output -join ' ')" }
+    }
+
+    $revParse = Invoke-Git @("-C", $scanDir, "rev-parse", "HEAD")
+    if ($revParse.Code -ne 0) { throw "git rev-parse failed in $Repo" }
+    $commit = ($revParse.Output | Out-String).Trim()
+    if ($commit -notmatch '^[0-9a-f]{40}$') { throw "Could not resolve a commit SHA for $Repo (got '$commit')" }
+
+    $sourceName = if ($SourceName) { $SourceName } else { $parts[1] }
+    $sourceName = $sourceName.ToLower() -replace '[^a-z0-9-]+', '-'
+    $sourceName = $sourceName.Trim('-')
+    if (-not $sourceName) { throw "Cannot derive a source name; pass -Source <name>" }
+    if ($Reg.sources.PSObject.Properties[$sourceName]) { throw "Source '$sourceName' is already in registry.json" }
+
+    $fallbackName = $parts[1]
+    $found = @()
+    foreach ($file in Get-ChildItem $scanDir -Recurse -Filter "SKILL.md" -File) {
+        if ($file.FullName -match '[\\/]\.git[\\/]') { continue }
+
+        $relative = $file.Directory.FullName.Substring($scanDir.Length).TrimStart('\', '/') -replace '\\', '/'
+        if (-not $relative) { $relative = "." }
+
+        $name = Get-SkillFrontmatterName -Path $file.FullName
+        if (-not $name) { $name = if ($relative -eq ".") { $fallbackName } else { Split-Path $relative -Leaf } }
+
+        $found += [pscustomobject]@{ Name = $name; Path = $relative }
+    }
+
+    if ($found.Count -eq 0) { throw "No SKILL.md found in $Repo@$commit" }
+
+    $kept = @()
+    $seen = @{}
+    foreach ($item in ($found | Sort-Object Path)) {
+        if ($seen.ContainsKey($item.Name)) {
+            Write-Warn "duplicate skill name '$($item.Name)' at $($item.Path) (ignored)"
+            continue
+        }
+        if ($Reg.skills.PSObject.Properties[$item.Name]) {
+            Write-Warn "skill '$($item.Name)' is already in the registry (ignored)"
+            continue
+        }
+        $seen[$item.Name] = $true
+        $kept += $item
+    }
+    if ($kept.Count -eq 0) { throw "No new skills to add from $Repo@$commit" }
+
+    Write-Host ""
+    Write-Host "$Repo @ $commit"
+    Write-Host "source: $sourceName"
+    foreach ($item in $kept) {
+        Write-Host ("  {0,-34} {1}" -f $item.Name, $item.Path)
+    }
+    Write-Host ""
+
+    $sourceBlock = "    `"$sourceName`": {`n      `"repo`": `"$Repo`",`n      `"commit`": `"$commit`"`n    }"
+
+    $skillLines = @()
+    for ($i = 0; $i -lt $kept.Count; $i++) {
+        $item = $kept[$i]
+        if ($item.Path -eq "skills/$($item.Name)") {
+            $entry = "    `"$($item.Name)`": { `"source`": `"$sourceName`" }"
+        }
+        else {
+            $entry = "    `"$($item.Name)`": { `"source`": `"$sourceName`", `"path`": `"$($item.Path)`" }"
+        }
+        if ($i -lt ($kept.Count - 1)) { $entry += "," }
+        $skillLines += $entry
+    }
+    $skillsBlock = ($skillLines -join "`n")
+
+    if (-not $Write) {
+        Write-Host "Add to the `"sources`" block of registry.json:"
+        Write-Host ""
+        Write-Host ($sourceBlock + ",")
+        Write-Host ""
+        Write-Host "Add to the `"skills`" block of registry.json:"
+        Write-Host ""
+        Write-Host $skillsBlock
+        Write-Host ""
+        Write-Host "Then add the names to a collection to make them installable by name:"
+        Write-Host "  gg install -Skills $($kept.Name -join ',')"
+        Write-Host ""
+        Write-Host "Or re-run with -Write to edit registry.json for you."
+        return
+    }
+
+    $original = [System.IO.File]::ReadAllText($RegistryPath)
+    $updated = Add-JsonBlock -Text $original -Key "sources" -Block $sourceBlock
+    $updated = Add-JsonBlock -Text $updated -Key "skills" -Block $skillsBlock
+
+    try { $candidate = $updated | ConvertFrom-Json }
+    catch { throw "Refusing to write registry.json: the generated file is not valid JSON. $_" }
+
+    $registryErrors = @(Test-Registry -Reg $candidate)
+    if ($registryErrors.Count -gt 0) {
+        foreach ($errorMessage in $registryErrors) { Write-Err $errorMessage }
+        throw "Refusing to write registry.json: $($registryErrors.Count) registry problem(s)"
+    }
+
+    [System.IO.File]::WriteAllText($RegistryPath, $updated, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Ok "wrote $sourceName -> registry.json ($($kept.Count) skill(s))"
+    Write-Warn "add the names to a collection in registry.json to install them with -Collections or sync"
+}
+
 # -------------------------------------------------------------------- main
 
 function Show-List {
@@ -577,30 +761,283 @@ function Show-Help {
     Write-Host @"
 GG_Skills
 
-Simplest use:
-  gg core        install the 'core' collection into the current project
-  gg list        show collections
-  gg sync        sync a project to its skills.json
+  gg                      pick skills from a checklist (easiest)
+  gg list                 show collections
+  gg install -Collections a,b   install specific collections
+  gg add-source -Repo owner/name  pin a repo and add its skills
+  gg init -Collections a,b      write skills.json for this project
+  gg sync                 install + prune to match skills.json
+  gg save -SkillName name copy a project skill into the library
+  gg verify               check installed files
+  gg doctor               check the registry
 
-Commands:
-  gg list    [-Collection name]
-  gg install -Collections a,b [-Skills x,y] [-Target path] [-Force]
-  gg init    -Collections a,b [-Skills x,y] [-Target path] [-Force]
-  gg sync    [-Target path] [-Force]
-  gg save    -SkillName name [-Target path] [-Force]
-  gg verify  [-Target path]
-  gg doctor  [-Target path]
-
-Or type a collection name instead of 'install'.
+All commands act on the current folder unless you add -Target path.
 "@
 }
 
-try {
-    if ($Command -eq "") {
-        Show-Help
-        exit 0
+function Get-InstalledSkillNames {
+    param([string]$TargetPath)
+
+    $skillsDir = Join-Path $TargetPath ".agents\skills"
+    $names = @()
+    if (Test-Path $skillsDir) {
+        foreach ($dir in Get-ChildItem $skillsDir -Directory) {
+            if (Test-Path (Join-Path $dir.FullName "SKILL.md")) { $names += $dir.Name }
+        }
+    }
+    return $names
+}
+
+function Get-PickerRows {
+    param($Reg, [string]$TargetPath)
+
+    $installed = Get-InstalledSkillNames -TargetPath $TargetPath
+
+    $bySource = [ordered]@{}
+    foreach ($p in $Reg.sources.PSObject.Properties) { $bySource[$p.Name] = @() }
+    if (-not $bySource.Contains("local")) { $bySource["local"] = @() }
+
+    foreach ($p in $Reg.skills.PSObject.Properties) { $bySource[$p.Value.source] += $p.Name }
+
+    if (Test-Path $LocalSkillsDir) {
+        foreach ($dir in Get-ChildItem $LocalSkillsDir -Directory) {
+            if (-not (Test-Path (Join-Path $dir.FullName "SKILL.md"))) { continue }
+            if ($Reg.skills.PSObject.Properties[$dir.Name]) { continue }
+            $bySource["local"] += $dir.Name
+        }
     }
 
+    # A collection that is exactly one source group would just duplicate its header.
+    $sourceSets = @()
+    foreach ($groupName in @($bySource.Keys)) {
+        $members = @($bySource[$groupName])
+        if ($members.Count -gt 0) { $sourceSets += (($members | Sort-Object) -join "|") }
+    }
+
+    $rows = @()
+
+    $shownCollections = 0
+    foreach ($p in $Reg.collections.PSObject.Properties) {
+        $members = @(Resolve-Collection -Reg $Reg -Name $p.Name)
+        if ($members.Count -eq 0) { continue }
+        if ($sourceSets -contains (($members | Sort-Object) -join "|")) { continue }
+        if ($shownCollections -eq 0) {
+            $rows += [pscustomobject]@{ Kind = "header"; Label = "collections"; Name = $null; Members = @(); Installed = $false }
+        }
+        $rows += [pscustomobject]@{
+            Kind      = "group"
+            Label     = $p.Name
+            Name      = $null
+            Members   = $members
+            Installed = $false
+        }
+        $shownCollections++
+    }
+
+    foreach ($groupName in @($bySource.Keys)) {
+        $members = @($bySource[$groupName])
+        if ($members.Count -eq 0) { continue }
+        $rows += [pscustomobject]@{ Kind = "group"; Label = $groupName; Name = $null; Members = $members; Installed = $false }
+        foreach ($member in $members) {
+            $rows += [pscustomobject]@{
+                Kind      = "skill"
+                Label     = $member
+                Name      = $member
+                Members   = @()
+                Installed = ($installed -contains $member)
+            }
+        }
+    }
+    return $rows
+}
+
+function Write-PickerLine {
+    param([string]$Text, [int]$Width, [string]$Color = "")
+
+    if ($null -eq $Text) { $Text = "" }
+    if ($Text.Length -ge $Width) { $Text = $Text.Substring(0, $Width) }
+    else { $Text = $Text.PadRight($Width) }
+
+    if ($Color) { Write-Host $Text -ForegroundColor $Color }
+    else { Write-Host $Text }
+}
+
+function Start-Picker {
+    param($Reg)
+
+    if ([Console]::IsInputRedirected) {
+        throw "No interactive terminal. Use 'gg list' or 'gg install -Collections <name>' instead."
+    }
+
+    $target = (Get-Location).Path
+    $rows = @(Get-PickerRows -Reg $Reg -TargetPath $target)
+    if ($rows.Count -eq 0) { Write-Warn "registry has no skills to pick from"; return @() }
+
+    $nav = @()
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+        if ($rows[$i].Kind -ne "header") { $nav += $i }
+    }
+    $skillRows = @($nav | Where-Object { $rows[$_].Kind -eq "skill" })
+    if ($skillRows.Count -eq 0) { Write-Warn "registry has no skills to pick from"; return @() }
+
+    $ticked = @{}
+    foreach ($i in $skillRows) { $ticked[$rows[$i].Name] = [bool]$rows[$i].Installed }
+
+    $cursor = 0
+    $offset = 0
+    $notice = ""
+    $drawn = $false
+
+    $width = 78
+    $bodyHeight = 20
+    try {
+        $width = [Math]::Min([Math]::Max([Console]::WindowWidth - 1, 20), 100)
+        $bodyHeight = [Math]::Max(4, [Console]::WindowHeight - 6)
+    }
+    catch { }
+
+    while ($true) {
+        if ($cursor -lt $offset) { $offset = $cursor }
+        if ($cursor -gt ($offset + $bodyHeight - 1)) { $offset = $cursor - $bodyHeight + 1 }
+        $maxOffset = [Math]::Max(0, $rows.Count - $bodyHeight)
+        if ($offset -gt $maxOffset) { $offset = $maxOffset }
+        if ($offset -lt 0) { $offset = 0 }
+
+        if ($drawn) { [Console]::SetCursorPosition(0, 0) }
+        else { [Console]::Clear(); $drawn = $true }
+
+        $selectedCount = 0
+        foreach ($i in $skillRows) { if ($ticked[$rows[$i].Name]) { $selectedCount++ } }
+
+        Write-PickerLine "GG_Skills - $target" $width "Cyan"
+        Write-PickerLine "" $width
+
+        $cursorRow = $nav[$cursor]
+
+        $bodyLines = 0
+        $last = [Math]::Min($offset + $bodyHeight, $rows.Count)
+        for ($r = $offset; $r -lt $last; $r++) {
+            $row = $rows[$r]
+            $prefix = if ($r -eq $cursorRow) { "> " } else { "  " }
+            $color = if ($r -eq $cursorRow) { "Yellow" } else { "" }
+
+            if ($row.Kind -eq "header") {
+                Write-PickerLine ("  " + $row.Label) $width "Cyan"
+            }
+            elseif ($row.Kind -eq "group") {
+                $count = @($row.Members).Count
+                $on = 0
+                foreach ($member in $row.Members) { if ($ticked[$member]) { $on++ } }
+                $box = if ($on -eq 0) { "[ ]" } elseif ($on -eq $count) { "[x]" } else { "[-]" }
+                Write-PickerLine ("  $prefix$box $($row.Label) ($count)") $width $color
+            }
+            else {
+                $box = if ($ticked[$row.Name]) { "[x]" } else { "[ ]" }
+                Write-PickerLine ("    $prefix$box " + $row.Name) $width $color
+            }
+            $bodyLines++
+        }
+        while ($bodyLines -lt $bodyHeight) {
+            Write-PickerLine "" $width
+            $bodyLines++
+        }
+
+        Write-PickerLine "" $width
+        if ($notice) {
+            Write-PickerLine ("  " + $notice) $width "Red"
+        }
+        else {
+            Write-PickerLine ("  $selectedCount/$($skillRows.Count) checked   space toggle | a all | enter apply | q quit") $width "DarkGray"
+        }
+
+        $key = [Console]::ReadKey($true)
+        $notice = ""
+
+        switch ($key.Key) {
+            "UpArrow" {
+                if ($cursor -gt 0) { $cursor-- }
+            }
+            "DownArrow" {
+                if ($cursor -lt ($nav.Count - 1)) { $cursor++ }
+            }
+            "Spacebar" {
+                $row = $rows[$nav[$cursor]]
+                if ($row.Kind -eq "skill") {
+                    $ticked[$row.Name] = -not $ticked[$row.Name]
+                }
+                else {
+                    $allOn = $true
+                    foreach ($member in $row.Members) { if (-not $ticked[$member]) { $allOn = $false } }
+                    foreach ($member in $row.Members) { $ticked[$member] = -not $allOn }
+                }
+            }
+            "Enter" {
+                $chosen = @()
+                foreach ($i in $skillRows) {
+                    if ($ticked[$rows[$i].Name]) { $chosen += $rows[$i].Name }
+                }
+                if ($chosen.Count -eq 0) {
+                    $notice = "Pick at least one skill."
+                }
+                else {
+                    [Console]::SetCursorPosition(0, 0)
+                    [Console]::Clear()
+                    return $chosen
+                }
+            }
+            "Escape" {
+                [Console]::SetCursorPosition(0, 0)
+                [Console]::Clear()
+                return @()
+            }
+            default {
+                $char = $key.KeyChar.ToString().ToLower()
+                if ($char -eq 'q') {
+                    [Console]::SetCursorPosition(0, 0)
+                    [Console]::Clear()
+                    return @()
+                }
+                if ($char -eq 'a') {
+                    $anyOff = $false
+                    foreach ($i in $skillRows) { if (-not $ticked[$rows[$i].Name]) { $anyOff = $true } }
+                    foreach ($i in $skillRows) { $ticked[$rows[$i].Name] = $anyOff }
+                }
+            }
+        }
+    }
+}
+
+function Invoke-PickerApply {
+    param($Reg, [string[]]$Chosen, [string]$TargetPath)
+
+    $TargetPath = Resolve-Target $TargetPath
+    $lock = Read-Lock $TargetPath
+    $skillsDir = Join-Path $TargetPath ".agents\skills"
+
+    $pruned = @()
+    foreach ($name in @($lock.skills.Keys)) {
+        if ($Chosen -notcontains $name) {
+            $dest = Join-Path $skillsDir $name
+            if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+            $lock.skills.Remove($name)
+            $pruned += $name
+        }
+    }
+    foreach ($name in $pruned) { Write-Skip "removed $name" }
+
+    Write-Host "Applying $($Chosen.Count) skills to $TargetPath"
+    foreach ($name in $Chosen) {
+        Install-One -Reg $Reg -Skill (Resolve-Skill -Reg $Reg -Name $name) -TargetPath $TargetPath -Lock $lock
+    }
+
+    Write-Lock -TargetPath $TargetPath -Lock $lock
+    Write-Ok "lock: $($lock.skills.Count) skills tracked"
+}
+
+# Dot-sourcing (tests) loads the functions without running the command line.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
+try {
     $reg = Get-Registry
 
     if ($Command.ToLower() -ne "doctor") {
@@ -611,17 +1048,20 @@ try {
         }
     }
 
-    # Shortcut: "gg core" means "gg install -Collections core"
-    $verb = $Command.ToLower()
-    $verbs = @("list", "install", "init", "sync", "save", "verify", "doctor", "help")
-    if ($verbs -notcontains $verb) {
-        if ($reg.collections.PSObject.Properties[$Command]) {
-            $Collections = @($Command)
-            $verb = "install"
+    if ($Command -eq "") {
+        $chosen = @(Start-Picker -Reg $reg)
+        if ($chosen.Count -eq 0) {
+            Write-Host "Nothing changed."
         }
+        else {
+            Invoke-PickerApply -Reg $reg -Chosen $chosen -TargetPath "."
+            Write-Host ""
+            Write-Host "Run 'gg' again to change your selection."
+        }
+        exit 0
     }
 
-    switch ($verb) {
+    switch ($Command.ToLower()) {
         "list" {
             Show-List -Reg $reg -CollectionName $Collection
             exit 0
@@ -640,6 +1080,10 @@ try {
         }
         "save" {
             Invoke-Save -Name $SkillName -TargetPath $Target
+            exit 0
+        }
+        "add-source" {
+            Invoke-AddSource -Reg $reg -Repo $Repo -Ref $Ref -SourceName $Source -Write:$Write
             exit 0
         }
         "verify" {
