@@ -1,0 +1,12 @@
+# Downloaded skills (these come from external sources)
+.agents/
+skills-lock.json
+
+# AI assistant runtime files
+~/.claude
+
+# Temp files
+*.log
+*.tmp
+*.log
+*.tmp

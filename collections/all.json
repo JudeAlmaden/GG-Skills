@@ -1,0 +1,9 @@
+{
+  "name": "all",
+  "description": "Every skill in the GG_Skills collection",
+  "includes": [
+    "ponytail",
+    "caveman",
+    "superpowers"
+  ]
+}
