@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "sources": {
+    "ponytail": {
+      "repo": "DietrichGebert/ponytail",
+      "commit": "ebd8654c2c627f721eb8f9c0d1bd4090a29f9e10"
+    },
+    "caveman": {
+      "repo": "JuliusBrussee/caveman",
+      "commit": "70f4f34e834893ea9af9f4fc6022266bd56d18b1"
+    },
+    "superpowers": {
+      "repo": "obra/superpowers",
+      "commit": "22f0b463e7a5e579904dd6211a520321035526f7"
+    }
+  },
+  "skills": {
+    "ponytail":          { "source": "ponytail" },
+    "ponytail-audit":    { "source": "ponytail" },
+    "ponytail-debt":     { "source": "ponytail" },
+    "ponytail-gain":     { "source": "ponytail" },
+    "ponytail-help":     { "source": "ponytail" },
+    "ponytail-review":   { "source": "ponytail" },
+
+    "caveman":                   { "source": "caveman" },
+    "ultracave":                 { "source": "caveman" },
+    "megacave":                  { "source": "caveman" },
+    "caveman-help":              { "source": "caveman" },
+    "caveman-commit":            { "source": "caveman" },
+    "caveman-review":            { "source": "caveman" },
+    "caveman-discover":          { "source": "caveman" },
+    "caveman-explore":           { "source": "caveman" },
+    "caveman-learn":             { "source": "caveman" },
+    "caveman-manage":            { "source": "caveman" },
+    "caveman-optimize":          { "source": "caveman" },
+    "caveman-compress":          { "source": "caveman" },
+    "caveman-stats":             { "source": "caveman" },
+    "caveman-setup":             { "source": "caveman" },
+    "caveman-evidence-review":   { "source": "caveman" },
+    "cavecrew":                  { "source": "caveman" },
+    "investigate-first":         { "source": "caveman" },
+    "lean-build":                { "source": "caveman" },
+    "migration":                 { "source": "caveman" },
+    "safe-refactor":             { "source": "caveman" },
+    "surgical-patch":            { "source": "caveman" },
+    "verify-and-stop":           { "source": "caveman" },
+
+    "using-superpowers":                 { "source": "superpowers" },
+    "brainstorming":                     { "source": "superpowers" },
+    "writing-plans":                     { "source": "superpowers" },
+    "executing-plans":                   { "source": "superpowers" },
+    "subagent-driven-development":       { "source": "superpowers" },
+    "test-driven-development":           { "source": "superpowers" },
+    "systematic-debugging":              { "source": "superpowers" },
+    "requesting-code-review":            { "source": "superpowers" },
+    "receiving-code-review":             { "source": "superpowers" },
+    "verification-before-completion":    { "source": "superpowers" },
+    "dispatching-parallel-agents":       { "source": "superpowers" },
+    "using-git-worktrees":               { "source": "superpowers" },
+    "finishing-a-development-branch":    { "source": "superpowers" },
+    "diagnosing-superpowers":            { "source": "superpowers" },
+    "writing-skills":                    { "source": "superpowers" }
+  },
+  "collections": {
+    "ponytail": [
+      "ponytail",
+      "ponytail-audit",
+      "ponytail-debt",
+      "ponytail-gain",
+      "ponytail-help",
+      "ponytail-review"
+    ],
+    "caveman": [
+      "caveman",
+      "ultracave",
+      "megacave",
+      "caveman-help",
+      "caveman-commit",
+      "caveman-review",
+      "caveman-discover",
+      "caveman-explore",
+      "caveman-learn",
+      "caveman-manage",
+      "caveman-optimize",
+      "caveman-compress",
+      "caveman-stats",
+      "caveman-setup",
+      "caveman-evidence-review",
+      "cavecrew",
+      "investigate-first",
+      "lean-build",
+      "migration",
+      "safe-refactor",
+      "surgical-patch",
+      "verify-and-stop"
+    ],
+    "superpowers": [
+      "using-superpowers",
+      "brainstorming",
+      "writing-plans",
+      "executing-plans",
+      "subagent-driven-development",
+      "test-driven-development",
+      "systematic-debugging",
+      "requesting-code-review",
+      "receiving-code-review",
+      "verification-before-completion",
+      "dispatching-parallel-agents",
+      "using-git-worktrees",
+      "finishing-a-development-branch",
+      "diagnosing-superpowers",
+      "writing-skills"
+    ],
+    "core": [
+      "ponytail",
+      "brainstorming",
+      "writing-plans",
+      "test-driven-development",
+      "verification-before-completion"
+    ],
+    "all": {
+      "includes": ["ponytail", "caveman", "superpowers"]
+    }
+  }
+}
